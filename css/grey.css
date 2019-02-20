@@ -1,0 +1,24 @@
+.img_grey {
+-webkit-transition:all .4s;
+    -moz-transition:all .4s;
+    -ms-transition:all .4s;
+    -o-transition:all .4s;
+    transition:all .4s;
+  -webkit-filter:grayscale(100%);
+    -moz-filter:greyscale(100%);
+    -ms-filter:greyscale(100%);
+    -o-filter:greyscale(100%);
+    filter:grayscale(100%);
+}
+.img_norm {
+    -webkit-transition:all .4s;
+    -moz-transition:all .4s;
+    -ms-transition:all .4s;
+    -o-transition:all .4s;
+    transition:all .4s;
+    -webkit-filter:greyscale(0%);
+    -moz-filter:greyscale(0%);
+    -ms-filter:greyscale(0%);
+    -o-filter:greyscale(0%);
+    filter:greyscale(0%);
+}

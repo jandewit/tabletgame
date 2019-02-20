@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+    <title>Recap</title>
+    <script src="scripts/jquery.js"></script>
+    <script src="scripts/jquery-ui.min.js"></script>
+    <script src="scripts/jquery.ui.touch-punch.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="scripts/jquery-ui.min.css">
+    <style>
+        html,
+        body {
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        @keyframes flippage {
+            0% {
+                left: 0px;
+                opacity: 1;
+            }
+            99% {
+                opacity: 1;
+            }    
+            100% {
+                left: -1000px;
+                opacity: 0;
+            }
+        }
+
+        .animate {
+            /*position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: black;*/
+            animation: flippage 2.5s ease 1s forwards;
+            display: block !important;
+        }
+
+        /*.contain {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0px;
+            left: 0px;
+            background-color: blue;
+        } */       
+    </style>
+</head>
+
+<body>
+
+    <script>
+        var socket = null;
+        var isopen = false;
+        var activeMap = "";
+        var activePage = null;
+        var msgtmp;
+        var activeTouch = [];
+        var last_moved = "";
+        var last_dropped = "";
+        var last_zone = "";
+
+        // Disable right click (for tablet)
+        document.addEventListener('contextmenu', event => event.preventDefault());
+
+        document.addEventListener('touchstart', function(e) {
+            if (e.targetTouches.length >= 2) {
+                e.preventDefault();
+            }
+        }, {passive: false});        
+
+        window.onload = function () {
+            socket = new WebSocket("ws://127.0.0.1:9014/ws");
+            socket.onopen = function () {
+                console.log("Connected!");
+                isopen = true;
+            }
+            socket.onmessage = function (e) {
+                if (isopen)
+                    socket.send("msgrcvd")
+                if (typeof e.data == "string") {
+                    console.log("Text message received: " + e.data);
+
+                    if (e.data.startsWith("showObject")) {
+                        msgtmp = e.data.split("|");
+                        jsonlist = JSON.parse(msgtmp[1]);
+                        jsonlist = jsonlist.ids;
+                        /*for (var i = 0; i < jsonlist.length; i++)
+                            showObject(jsonlist[i]);*/
+
+                        // This should be a page turn? "cover" now not recognized as object, so empty string counts :D
+                        if (jsonlist.length > 0) {
+                            if (jsonlist[0] == "cover" || jsonlist[0] == "")                                
+                                showPage("cover");
+                            else
+                                showPage(jsonlist[0].substring(2));
+                            /*var page_id = jsonlist[0].substring(2);
+
+                            if (page_id == 'cover') {
+                                var i = 0;
+                                $('.page.hidden').each(function() {
+                                    var me = this;
+
+                                    setTimeout(function() {
+                                        $(me).animate({
+                                            left: '0px'
+                                        }, 2500);                                                                            
+                                    }, i);
+
+                                    i += 100;
+                                });
+                            }
+
+                            //$('#' + activePage).hide();
+                            $('#' + activePage).animate({
+                                left: '-1000px'
+                            }, 2500);
+
+                            $('#' + activePage).addClass('hidden');
+
+                            $('#sticker_' + activePage).hide();
+                            activePage = page_id;
+                            //$('#' + activePage).show();
+
+                            $('#sticker_' + activePage).show();*/
+                        }
+                    }
+
+                    if (e.data.startsWith("makeMovable")) {
+                        // This should make an object draggable
+                        msgtmp = e.data.split("|");
+                        jsonlist = JSON.parse(msgtmp[1]);
+                        jsonlist = jsonlist.ids;
+                        for (var i = 0; i < jsonlist.length; i++)
+                            makeMovable(jsonlist[i]);
+                    }
+
+                    if (e.data.startsWith("makeStatic")) {
+                        // This one landed in the correct position, should not be made movable again!
+                        // We get sent too many stickers to make static actually, so we're gonna remember the one that was moved :)
+                        objectDropped(last_dropped, last_zone);
+                    }
+
+                    if (e.data.startsWith("moveObject")) {
+                        // The robot wants to move an object for the child to give help
+                        jsonlist = e.data.split("|");
+                        jsonlist = JSON.parse(jsonlist[1]);
+
+                        movedId = null;
+
+                        console.log("=== MOVE OBJECT");
+
+                        if ($('#m_' + jsonlist.id).length > 0) {
+                            moveObjectbyID("m_" + jsonlist.id, jsonlist.position.x, jsonlist.position.y, jsonlist.timeout, jsonlist.loop);
+                            movedId = "m_" + jsonlist.id;
+                        }
+                        else if (last_moved.indexOf(jsonlist.id) != -1) {
+                            console.log("last moved: " + last_moved);
+                            if ($('#' + last_moved).length == 0) {
+                                console.log("object not found");
+
+                                if (last_moved.charAt(0) == 'm') {
+                                    last_moved = 's' + last_moved.substring(1);
+                                }
+                                else {
+                                    last_moved = 'm' + last_moved.substring(1);
+                                }
+                            }
+                            moveObjectbyID(last_moved, jsonlist.position.x, jsonlist.position.y, jsonlist.timeout, jsonlist.loop);
+                            movedId = last_moved;
+                        }
+                        else {
+                            $('.' + jsonlist.id).each(function() {
+                                console.log("..." + this.id);
+                                if (this.id.startsWith('m_')) {
+                                    moveObjectbyID(this.id, jsonlist.position.x, jsonlist.position.y, jsonlist.timeout, jsonlist.loop);
+                                    movedId = this.id;
+
+                                    return false;
+                                }
+                            });
+                        }
+
+                        // Make this one static
+                        $('#' + movedId)[0].id = 's_' + $('#' + movedId)[0].id.substring(2); 
+                        last_moved = "";
+                    }       
+
+                    if (e.data.startsWith("giveObjectIDs")) {
+                        msgtmp = e.data.split("|");
+                        var id = msgtmp[1].split('"').join('');
+    
+                        giveObjectIDs(id);
+                    }     
+
+                    if (e.data.startsWith("showTouch")) {
+                        // Highlighting for give_help
+                        msgtmp = e.data.split("|");
+                        jsonlist = JSON.parse(msgtmp[1]);
+                        jsonlist = jsonlist.ids;
+
+                        for (var i = 0; i < jsonlist.length; i++) {
+                            // Dirty fix for the cover page.. :D
+                            /*if (jsonlist[i] == "s_cover") {
+                                $("#cover").css('filter', 'drop-shadow(5px 5px 3px #cc0000) drop-shadow(-5px -5px 3px #cc0000)');
+                                activeTouch.push("#cover");
+                            }*/
+
+                            if ($('#m_' + jsonlist[i]).length > 0) {
+                                $('#m_' + jsonlist[i]).css('filter', 'drop-shadow(5px 5px 3px #cc0000) drop-shadow(-5px -5px 3px #cc0000)');
+                                activeTouch.push("#m_" + jsonlist[i]);
+                            }
+
+                            else if (last_moved.indexOf(jsonlist[i]) != -1) {
+                                if ($('#' + last_moved).length == 0) {
+                                    if (last_moved.charAt(0) == 'm') {
+                                        last_moved = 's' + last_moved.substring(1);
+                                    }
+                                    else {
+                                        last_moved = 'm' + last_moved.substring(1);
+                                    }
+                                }
+
+                                $('#' + last_moved).css('filter', 'drop-shadow(5px 5px 3px #cc0000) drop-shadow(-5px -5px 3px #cc0000)');
+                                activeTouch.push(last_moved);
+                            }
+
+
+                            else {
+                                $('.' + jsonlist[i]).each(function() {
+                                    if (this.id.startsWith('m_')) {
+                                        $(this).css('filter', 'drop-shadow(5px 5px 3px #cc0000) drop-shadow(-5px -5px 3px #cc0000)');
+                                        activeTouch.push(this.id);
+                                        return false;
+                                    }
+                                })
+                            }
+                        }
+                    }
+
+                    if (e.data.startsWith("hideTouch")) {
+                        // Is handled by the callback
+
+                        /*activeTouch.forEach(function(element) {
+                            $(element).css('filter', '');
+                        });*/
+                    }                         
+                }
+            }
+
+            socket.onclose = function (e) {
+                console.log("Connection closed (wasClean = " + e.wasClean + ", code = " + e.code + ", reason = '" + e.reason + "')");
+                isopen = false;
+                socket = null;
+            }
+        };
+
+
+        function showPage(str) {
+            var page_id = str;            
+
+            if ($("#" + activePage).find('.drop_area').length > 0) {
+                $('#' + activePage).find('.drop_area').droppable("disable");            
+            }
+
+            else {
+                $('#' + activePage).find('.photo_container').droppable("disable");            
+            }
+
+            if (page_id == 'cover') {
+                var i = 0;
+                $('.page.hidden').each(function() {
+                    var me = this;
+
+                    setTimeout(function() {
+                        $(me).animate({
+                            left: '0px'
+                        }, 2500);                                                                            
+                    }, i);
+
+                    i += 250;
+                });
+
+                setTimeout(function() {
+                    $('#cover').animate({
+                        left: '0px'
+                    }, 2500);                                                                            
+                }, i);                
+            }
+
+            else {
+                //$('#' + activePage).hide();
+                var oldPage = activePage;
+                $('#' + activePage).animate({
+                    left: '-1000px'
+                }, 2500, function() {
+                    $('#sticker_' + oldPage).hide(); 
+                });
+
+                $('#' + activePage).addClass('hidden');                
+            }
+
+            activePage = page_id;
+            //$('#' + activePage).show();
+
+            $('#sticker_' + activePage).show();
+
+            if (page_id != 'cover') {
+                // If the page has specific target areas, we should enable those as droppable
+                if ($("#" + activePage).find('.drop_area').length > 0) {
+                    $("#" + activePage).find(".drop_area").droppable({
+                      drop: function( event, ui ) {
+
+                        console.log((ui.draggable.offset().left - $('#' + activePage).find('.photo').offset().left) / $('#' + activePage).find('.photo').width() + ',' + (ui.draggable.offset().top - $('#' + activePage).find('.photo').offset().top) / $('#' + activePage).find('.photo').height());
+
+                        // Send event to IM
+                        var drag_id = ui.draggable[0].id;
+                        var container_id = this.id;
+
+                        var jsonobj = {};
+                        jsonobj[drag_id] = [
+                            {
+                                'obj_2': container_id,
+                                'relation': 'above'
+                            }
+                        ];
+
+                        console.log(JSON.stringify(jsonobj)); 
+                        last_dropped = ui.draggable;
+                        last_zone = $(this).parent();
+                        disableStickers();
+                        makeMovable(ui.draggable.attr('id'));
+                        //objectDropped(ui.draggable, $(this).parent());
+
+                        sendText("call:tablet.interactionmanager.updtSpRel|" + JSON.stringify(jsonobj));
+                      }
+                    });
+                }
+
+                // Otherwise, anywhere on the photo is droppable
+                else {
+                    $("#" + activePage).find(".photo_container").droppable({
+                      drop: function( event, ui ) {
+                        console.log((ui.draggable.offset().left - $('#' + activePage).find('.photo').offset().left) / $('#' + activePage).find('.photo').width() + ',' + (ui.draggable.offset().top - $('#' + activePage).find('.photo').offset().top) / $('#' + activePage).find('.photo').height());
+
+                        // Send event to IM
+                        var drag_id = ui.draggable[0].id;
+                        var container_id = this.id;
+
+                        var jsonobj = {};
+                        jsonobj[drag_id] = [
+                            {
+                                'obj_2': container_id,
+                                'relation': 'above'
+                            }
+                        ];
+
+                        console.log(JSON.stringify(jsonobj)); 
+                        last_dropped = ui.draggable;
+                        last_zone = $(this);
+                        disableStickers();
+                        makeMovable(ui.draggable.attr('id'));
+                        //objectDropped(ui.draggable, $(this));
+
+                        sendText("call:tablet.interactionmanager.updtSpRel|" + JSON.stringify(jsonobj));
+                      }
+                    });
+                }
+            }
+        }
+
+        function moveObjectbyID(objID, posX, posY, timeOut, loop) {
+            console.log("Moving object: " + objID);
+
+            // Make sure nothing is currently being dragged by the child.
+            $(document).trigger("mouseup");
+            $(document).trigger("touchend");
+
+            // We ignore loop for now ;)
+            var origWidth = $('#' + objID).width();
+            var origHeight = $('#' + objID).height() + 5;
+            var origLeft = $('#' + objID).offset().left;
+            var origTop = $('#' + objID).offset().top;
+
+            $('#' + objID).css({
+                'position': 'fixed',
+                'left': origLeft + 'px',
+                'top': origTop + 'px',
+                'width': origWidth + 'px'
+            });
+
+            //console.log($('.photo:visible').offset().left + posX * $('#' + activePage).find('.photo').width() + "px");
+
+            // Make sure the one we are dragging is always in front (overlaps the other stickers)
+            $('.sticker').css('z-index', 9);
+            $('#' + objID).css('z-index', 10);
+
+
+            $('#' + objID).animate({
+                top: $('#' + activePage).find('.photo').offset().top + posY * $('#' + activePage).find('.photo').height() + "px",
+                left: $('#' + activePage).find('.photo').offset().left + posX * $('#' + activePage).find('.photo').width() + "px"
+            }, timeOut * 1000, function() {                
+                if ($('#' + objID).length == 0)
+                    objID = "s_" + objID.substring(2);
+
+                // Disable all stickers again
+                disableStickers();
+                
+                console.log(objID);
+                objectDropped($('#' + objID), $('#' + activePage).find('.photo_container'));
+            });
+
+            // Drop a placeholder
+            /*var placeholder = $('<div class="placeholder"></div>');
+            $('#' + objID).after(placeholder);
+            
+            placeholder.css({
+                'width': origWidth + 'px',
+                'height': origHeight + 'px'
+            });*/
+
+        };        
+
+        function giveObjectIDs(id) {
+            var results = [];
+
+            $('.' + id).each(function() {
+                if (this.id.startsWith('m_'))
+                    results.push(this.id);
+            });
+
+            if ($('#m_' + id).length > 0) {
+                results.push("m_" + id);
+            }
+
+            console.log(results);
+
+            sendText("call:tablet.interactionmanager.setObjectIDs|" + JSON.stringify(results));  
+        }
+
+        function sendText(txt) {
+            if (isopen) {
+                socket.send(txt);
+                console.log("Sending to socket:" + txt);
+            } else {
+                console.log("Connection not opened.")
+            }
+        };
+
+        function disableStickers() {
+            if ($('.sticker:visible').each(function() {
+                if ($(this).draggable("instance") != undefined) {
+                    $(this).draggable("disable");
+                }
+            }));
+
+            $('.sticker').css('filter', '');
+        }
+
+        function makeMovable(obj_id) {
+            if (!$('#' + obj_id).is(":visible")) {
+                return;
+            }
+            
+            console.log('Making movable: ' + obj_id);
+
+            if ($('#' + obj_id).draggable("instance") == undefined) {
+                $('#' + obj_id).draggable({
+                    start: function(event, ui) {
+                        // Make sure the one we are dragging is always in front (overlaps the other stickers)
+                        $('.sticker').css('z-index', 9);
+                        $(this).css('z-index', 10);
+                        disableStickers();
+                        makeMovable($(ui.helper).attr('id'));
+                        last_moved = $(ui.helper).attr('id');
+                    }
+                });                            
+            }
+            else {
+                $('#' + obj_id).draggable("enable");
+            }
+
+            $('#' + obj_id).css('filter', 'drop-shadow(5px 5px 3px #96fc37) drop-shadow(-5px -5px 3px #96fc37)');
+
+        }
+
+        function objectDropped(obj, dropzone, isAutoMove = false) {
+            console.log(dropzone.offset().top);
+
+            var top = obj.offset().top;
+
+            if (!isAutoMove) {
+                top -= dropzone.offset().top;
+            }
+
+            obj.css({
+                'position': 'absolute',
+                'left': obj.offset().left + 'px',
+                'top': top + 'px',
+                'width': obj.width() + 'px',
+                'height': obj.height() + 'px',
+            });
+
+            obj.appendTo(dropzone);
+
+            // Make this one static
+            obj[0].id = 's_' + obj[0].id.substring(2); 
+
+            // Disable all stickers again
+            disableStickers();
+        }
+
+
+        $( function() {
+            // Enable the cover page for clicking
+            $("#cover").addClass("enabled");
+            activePage = 'cover';
+
+            // General click event for all divs
+            $('div').click(function(e) {
+                var target = $(e.currentTarget);
+
+                if (target.hasClass('enabled')) {
+                    console.log(target);
+                    var jsonobj = {
+                        "id": target[0].id,
+                        "position": {
+                            "x": target[0].offsetLeft,
+                            "y": target[0].offsetTop,
+                            "z": 0
+                        }
+                    };
+                    sendText("call:tablet.interactionmanager.touchDown|" + JSON.stringify(jsonobj));  
+                    setTimeout(function() {
+                        sendText("call:tablet.interactionmanager.touchUp|" + JSON.stringify(jsonobj));  
+                    }, 50);                  
+                }
+            });
+        });
+
+            /*$( ".sticker" ).draggable({
+                start: function() {
+                    // Make sure the one we are dragging is always in front (overlaps the other stickers)
+                    $('.sticker').css('z-index', 1);
+                    $(this).css('z-index', 2);
+                }
+            });*/
+
+        /*function objectClick() {
+            var jsontmp;
+            jsontmp = {
+                "id": activeMap,
+                "position": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                }
+            };
+            socket.send("call:tablet.interactionmanager.touchDown|" + JSON.stringify(jsontmp));
+            socket.close();
+            window.open("scene.html", "_top");
+        }*/
+    </script>
+
+    <div id="container" style="display: flex; width: 100%; height: 100%; align-items: center; background-color: #e8e8e8;">
+        <div id="photobook_page" style="width: 70%; height: 80%; display: flex; align-items: center; justify-content: center; position: relative">
+            <div id="cover" style="width: 100%; height: 100%; display: flex; align-items: center; position: absolute; z-index: 7;">
+                <img draggable="false" src="recap_content/scrapbook_cover.png" style="width: 100%; height: 100%"/>
+                &nbsp;
+            </div>
+            <div id="page_1" class="page" style="width: 100%; height: 100%; position: absolute; z-index: 6">
+                <div id="m_photo_zoo" class="photo_container" style="width: 100%; height: 100%; position: relative; display: flex; align-items: center; background-color: #fff">
+                    <div style="display: flex; align-items: center; width: 100%; height: 100%; position: absolute;">
+                        <img draggable="false" src="recap_content/zoo_picture.png" class="photo" style="margin-left: 6%; width: 85%; height: 70%; margin-top: -2%" />
+                    </div>
+                    <img draggable="false" src="recap_content/scrapbook_overlay.png" style="width: 100%; height: 100%; z-index: 1; top: 0px" />
+                </div>
+            </div>
+            <div id="page_2" class="page" style="width: 100%; height: 100%; position: absolute; z-index: 5">
+                <div id="m_photo_bakery" class="photo_container" style="width: 100%; height: 100%; position: relative; display: flex; align-items: center; background-color: #fff">
+                    <div style="display: flex; align-items: center; width: 100%; height: 100%; position: absolute;">
+                        <img draggable="false" src="recap_content/bakery_picture.png" class="photo" style="margin-left: 6%; width: 85%; height: 70%; margin-top: -2%" />
+                    </div>
+                    <img draggable="false" src="recap_content/scrapbook_overlay.png" style="width: 100%; height: 100%; z-index: 1; top: 0px" />
+                </div>
+            </div> 
+            <div id="page_3" class="page" style="width: 100%; height: 100%; position: absolute; z-index: 4;">
+                <div id="m_photo_zoo2" class="photo_container" style="width: 100%; height: 100%; position: relative; display: flex; align-items: center; background-color: #fff">
+                    <div style="display: flex; align-items: center; width: 100%; height: 100%; position: absolute;">
+                        <img draggable="false" src="recap_content/zoo2_picture.png" class="photo" style="margin-left: 6%; width: 85%; height: 70%; margin-top: -2%" />
+                    </div>
+                    <img draggable="false" src="recap_content/scrapbook_overlay.png" style="width: 100%; height: 100%; z-index: 1; top: 0px" />
+                </div>
+            </div>            
+            <div id="page_4" class="page" style="width: 100%; height: 100%; position: absolute; z-index: 3">
+                <div id="m_photo_fruitshop" class="photo_container" style="width: 100%; height: 100%; position: relative; display: flex; align-items: center; background-color: #fff">
+                    <div id="m_droppable_above" class="drop_area" style="width: 10%; height: 15%; left: 41.5%; top: 20%; z-index: 1; position: absolute;">
+
+                    </div>
+                    <div id="m_droppable_next_to" class="drop_area" style="width: 10%; height: 15%; left: 17%; top: 47%; z-index: 1; position: absolute;">
+
+                    </div>                    
+                    <div id="m_droppable_below" class="drop_area" style="width: 10%; height: 15%; left: 41.5%; top: 57%; z-index: 1; position: absolute;">
+
+                    </div>
+                    <div id="m_droppable_on" class="drop_area" style="width: 10%; height: 15%; left: 41.5%; top: 40%; z-index: 1; position: absolute;">
+
+                    </div>                                        
+                    <div style="display: flex; align-items: center; width: 100%; height: 100%; position: absolute;">
+                        <img draggable="false" src="recap_content/fruitshop_picture.png" class="photo" style="margin-left: 6%; width: 85%; height: 70%; margin-top: -2%" />
+                    </div>
+                    <img draggable="false" src="recap_content/scrapbook_overlay.png" style="width: 100%; height: 100%; z-index: 1; top: 0px" />
+                </div>
+            </div> 
+            <div id="page_5" class="page" style="width: 100%; height: 100%; position: absolute; z-index: 2">
+                <div id="m_photo_forest" class="photo_container" style="width: 100%; height: 100%; position: relative; display: flex; align-items: center; background-color: #fff">
+                                   
+                    <div style="display: flex; align-items: center; width: 100%; height: 100%; position: absolute;">
+                        <img draggable="false" src="recap_content/forest_picture.png" class="photo" style="margin-left: 6%; width: 85%; height: 70%; margin-top: -2%" />
+                    </div>
+                    <img draggable="false" src="recap_content/scrapbook_overlay.png" style="width: 100%; height: 100%; z-index: 1; top: 0px" />
+                </div>
+            </div> 
+            <div id="page_6" class="page" style="width: 100%; height: 100%; position: absolute; z-index: 1">
+                <div id="m_photo_playground" class="photo_container" style="width: 100%; height: 100%; position: relative; display: flex; align-items: center; background-color: #fff">
+                                   
+                    <div style="display: flex; align-items: center; width: 100%; height: 100%; position: absolute;">
+                        <img draggable="false" src="recap_content/playground_picture.png" class="photo" style="margin-left: 6%; width: 85%; height: 70%; margin-top: -2%" />
+                    </div>
+                    <img draggable="false" src="recap_content/scrapbook_overlay.png" style="width: 100%; height: 100%; z-index: 1; top: 0px" />
+                </div>
+            </div>                                                
+        </div>
+        <div id="stickers" style="width: 30%; background-color: #e8e8e8; height: 100%; text-align: center; padding-top: 16px;">
+             <div id="sticker_page_1" style="width: 100%; height: 100%; position: relative; display: none">
+                <img draggable="false" id="m_sticker11" class="sticker" src="recap_content/sticker_monkey.png" style="width: 60%; position: absolute; left: 15%; top: 5%" />
+                <img draggable="false" id="m_sticker12" class="sticker" src="recap_content/sticker_elephant.png" style="width: 65%; position: absolute; left: 12%; top: 39%" />
+                <img draggable="false" id="m_sticker13" class="sticker" src="recap_content/sticker_giraffe.png" style="width: 70%; position: absolute; left: 15%; top: 65%" />                
+            </div>
+            <div id="sticker_page_2" style="width: 100%; height: 100%; position: relative; display: none">
+                <img draggable="false" id="m_sticker21" class="sticker" src="recap_content/sticker_flour.png" style="width: 45%; position: absolute; left: 20%; top: 10%" />
+                <img draggable="false" id="m_sticker22" class="sticker" src="recap_content/sticker_milk.png" style="width: 30%; position: absolute; left: 30%; top: 38%" />
+                <img draggable="false" id="m_sticker23" class="sticker" src="recap_content/sticker_buckets.png" style="width: 40%; position: absolute; left: 25%; top: 55%" />                
+                <img draggable="false" id="m_sticker24" class="sticker" src="recap_content/sticker_bread.png" style="width: 20%; position: absolute; left: 40%; top: 80%" />                
+            </div>
+            <div id="sticker_page_3" style="width: 100%; height: 100%; position: relative; display: none">
+                <img draggable="false" id="m_sticker31" class="sticker" src="recap_content/sticker_giraffe_high.png" style="width: 50%; position: absolute; left: 20%; top: 0%" />
+                <img draggable="false" id="m_sticker32" class="sticker" src="recap_content/sticker_big_elephant.png" style="width: 40%; position: absolute; left: 20%; top: 40%" />
+                <img draggable="false" id="m_sticker33" class="sticker" src="recap_content/sticker_monkeys.png" style="width: 60%; position: absolute; left: 15%; top: 60%" />                
+                <img draggable="false" id="m_sticker34" class="sticker" src="recap_content/sticker_giraffe_low.png" style="width: 20%; position: absolute; left: 20%; top: 76%" />                
+                <img draggable="false" id="m_sticker35" class="sticker" src="recap_content/sticker_small_elephant.png" style="width: 20%; position: absolute; left: 60%; top: 80%" />                
+            </div>            
+            <div id="sticker_page_4" style="width: 100%; height: 100%; position: relative; display: none">
+                <img draggable="false" id="m_sticker41" class="sticker" src="recap_content/sticker_apple.png" style="width: 20%; position: absolute; left: 30%; top: 15%" />
+                <img draggable="false" id="m_sticker42" class="sticker" src="recap_content/sticker_apple.png" style="width: 20%; position: absolute; left: 30%; top: 35%" />
+                <img draggable="false" id="m_sticker43" class="sticker" src="recap_content/sticker_apple.png" style="width: 20%; position: absolute; left: 30%; top: 55%" />                
+                <img draggable="false" id="m_sticker44" class="sticker" src="recap_content/sticker_apple.png" style="width: 20%; position: absolute; left: 30%; top: 75%" />                
+            </div>  
+            <div id="sticker_page_5" style="width: 100%; height: 100%; position: relative; display: none">
+                <img draggable="false" id="m_sticker51" class="sticker" src="recap_content/sticker_monkey_run.png" style="width: 30%; position: absolute; left: 30%; top: 5%" />
+                <img draggable="false" id="m_sticker52" class="sticker" src="recap_content/sticker_monkey_walk.png" style="width: 30%; position: absolute; left: 30%; top: 28%" />
+                <img draggable="false" id="m_sticker53" class="sticker" src="recap_content/sticker_bird.png" style="width: 50%; position: absolute; left: 20%; top: 52%" />                
+                <img draggable="false" id="m_sticker54" class="sticker" src="recap_content/sticker_giraffe_jump.png" style="width: 60%; position: absolute; left: 15%; top: 70%" />                
+            </div>  
+            <div id="sticker_page_6" style="width: 100%; height: 100%; position: relative; display: none">
+                <img draggable="false" id="m_sticker61" class="sticker" src="recap_content/sticker_girl_sliding.png" style="width: 30%; position: absolute; left: 30%; top: 7%" />
+                <img draggable="false" id="m_sticker62" class="sticker" src="recap_content/sticker_girl_throwing.png" style="width: 30%; position: absolute; left: 30%; top: 30%" />
+                <img draggable="false" id="m_sticker63" class="sticker" src="recap_content/sticker_boy_catching.png" style="width: 30%; position: absolute; left: 30%; top: 53%" />                
+                <img draggable="false" id="m_sticker64" class="sticker" src="recap_content/sticker_girl_climbing.png" style="width: 30%; position: absolute; left: 30%; top: 76%" />                
+            </div>                                
+        </div>
+    </div>
+</body>
+
+</html>

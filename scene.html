@@ -1,0 +1,1601 @@
+﻿<!DOCTYPE html>
+<html>
+
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+	<title>Scene Loader</title>
+	<!-- Babylon.js -->
+	<script src="scripts/jquery-1.8.3.min.js"></script>
+	<script src="scripts/hand.minified-1.2.js"></script>
+	<script src="scripts/babylon.2.5.js"></script>
+	<script src="scripts/main.js"></script>
+
+	<style>
+		html,
+		body {
+			overflow: hidden;
+			width: 100%;
+			height: 100%;
+			margin: 0;
+			padding: 0;
+		}
+
+		#renderCanvas {
+			width: 100%;
+			height: 100%;
+			touch-action: none;
+		}
+	</style>
+</head>
+
+<body>
+	<canvas id="renderCanvas"></canvas>
+	$('body').append('
+	<button id="loadScene" style="position: absolute; left: 100px; top: 0px;">Load Sample Scene</button>'); $('body').append('
+	<button id="createScene" style="position: absolute; left: 0px; top: 0px;">Create Scene</button>'); $('body').append('
+	<button id="loadObject" style="position: absolute; left: 0px; top: 20px;">Load Object</button>'); $('body').append('
+	<button id="createObject" style="position: absolute; left: 0px; top: 40px;">Create Object</button>'); $('body').append('
+	<button id="savejson" style="position: absolute; left: 240px; top: 0px;">Save JSON</button>');
+	<button id="debugbtn" style="position: absolute; left: 330px; top: 0px;">Debug</button>');
+	<button id="anibtn" style="position: absolute; left: 390px; top: 0px;">Group Mode</button>');
+	<script>
+		var socket = null;
+		var isopen = false;
+		var elephantobj, elephantobj2;
+		var branchobj, branchobj2, branchobj3;
+		var jsonlist;
+		var groundobj;
+		var hiddenObj = [];
+		var jsonstr;
+		var jsonstrSample;
+		var logger;
+		var currentMesh;
+		var msgtmp;
+		var editor = false; //is in editing mode?
+		var scene;
+		var radi = 0.01745329252;
+		var canvas = document.getElementById("renderCanvas");
+		var engine = new BABYLON.Engine(canvas, true, { stencil: true });
+		var light;
+		var clicksEnabled = true;
+		var hl;
+		var loadcounter = 0;
+		var createcounter = 0;
+		var loadlist = [];
+		var createlist = [];
+		var groundfloor;
+		var camera;
+		var particleSystem;
+		var cameraMode = false;
+		var lastloadedmodel = "";
+		var groupMode = false;
+		var prevCollisionId = "";
+		var existingYcoords = {};
+		var jsontmp = {};
+
+        // Disable right click (for tablet)
+        document.addEventListener('contextmenu', event => event.preventDefault());
+
+        document.addEventListener('touchstart', function(e) {
+            if (e.targetTouches.length >= 2) {
+                e.preventDefault();
+            }
+        }, {passive: false});     		
+
+		window.onload = function () {
+			window.addEventListener("keyup", handleKeyUp, false);
+			socket = new WebSocket("ws://127.0.0.1:9014/ws");
+			document.getElementById('loadScene').style.visibility = 'hidden';
+			document.getElementById('createScene').style.visibility = 'hidden';
+			document.getElementById('loadObject').style.visibility = 'hidden';
+			document.getElementById('createObject').style.visibility = 'hidden';
+			document.getElementById('savejson').style.visibility = 'hidden';
+			document.getElementById('debugbtn').style.visibility = 'hidden';
+			document.getElementById('anibtn').style.visibility = 'hidden';
+			socket.onopen = function () {
+
+				console.log("Connected!");
+				isopen = true;
+
+			}
+			socket.onmessage = function (e) {
+				if (isopen)
+					socket.send("msgrcvd")
+				if (typeof e.data == "string") {
+					console.log("Text message received: " + e.data);
+
+					if (e.data.startsWith("moveObject")) //placeholder for moving objects
+					{
+						//retrieve the json list, parse it and use in after it loads the scene
+						jsonlist = e.data.split("|");
+						jsonlist = JSON.parse(jsonlist[1]);
+
+						moveObjectbyID(jsonlist.id, jsonlist.position.x, jsonlist.position.y, jsonlist.position.z, jsonlist.timeout, jsonlist.loop);
+					}
+					if (e.data.startsWith("loadScene")) {
+						//retrieve the json list, parse it and use in after it loads the scene
+						jsonlist = e.data.split("|");
+						editor = false;
+						jsonlist = JSON.parse(jsonlist[1]);
+
+						scene = createScene();
+						//optimize scene
+						//BABYLON.SceneOptimizer.OptimizeAsync(scene); // [JAN] disabled because it apparently merges meshes, need to have a good look at this.
+						scene.clearColor = new BABYLON.Color3(100 / 255, 1, 1);
+						engine.runRenderLoop(function () { scene.render(); });
+
+					}
+					if (e.data.startsWith("prepareScene")) {
+						//reload scene to prepare for next scene and flush memory
+						socket.close();
+						location.reload();
+					}
+					if (e.data.startsWith("showMap")) {
+						//load the map scene
+						logger = logger + "Scene finished at:" + new Date().toLocaleString() + "\r\n";
+						saveToFile(logger);
+						socket.close();
+						window.open("map.html", "_top");
+					}
+					if (e.data.startsWith("showRecap")) {
+						//load the map scene
+						logger = logger + "Scene finished at:" + new Date().toLocaleString() + "\r\n";
+						saveToFile(logger);
+						socket.close();
+						window.open("recap.html", "_top");
+					}					
+					if (e.data.startsWith("makeStatic")) {
+						//makes the objects static
+						//split the message to retrieve the id
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.ids;
+						for (var i = 0; i < jsonlist.length; i++)
+							makeStatic(jsonlist[i]);
+					}
+					if (e.data.startsWith("makeMovable")) {
+						//makes the objects static
+						//split the message to retrieve the id
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.ids;
+						for (var i = 0; i < jsonlist.length; i++)
+							makeMovable(jsonlist[i]);
+					}
+					if (e.data.startsWith("enableObject")) {
+						//makes the objects static
+						//split the message to retrieve the id
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.ids;
+						for (var i = 0; i < jsonlist.length; i++)
+							enableObject(jsonlist[i]);
+					}
+					if (e.data.startsWith("disableObject")) {
+						//makes the objects static
+						//split the message to retrieve the id
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.ids;
+						for (var i = 0; i < jsonlist.length; i++)
+							disableObject(jsonlist[i]);
+					}
+					if (e.data.startsWith("showObject")) {
+						//shows objects
+						//split the message to retrieve the id
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.ids;
+						for (var i = 0; i < jsonlist.length; i++)
+							showObject(jsonlist[i]);
+					}
+					if (e.data.startsWith("hideObject")) {
+						//shows objects
+						//split the message to retrieve the id
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.ids;
+						for (var i = 0; i < jsonlist.length; i++)
+							hideObject(jsonlist[i]);
+
+					}
+					if (e.data.startsWith("hintObject")) {
+
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.ids;
+						for (var i = 0; i < jsonlist.length; i++)
+							hintObject(jsonlist[i], BABYLON.Color3.Green());
+					}
+					if (e.data.startsWith("hintRObject")) {
+
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.ids;
+						for (var i = 0; i < jsonlist.length; i++)
+							hintRObject(jsonlist[i]);
+					}
+					if (e.data.startsWith("hintRAllObjects")) {
+						hintRAllObjects();
+					}
+					if (e.data.startsWith("showTouch")) {
+						hintRAllObjects();						
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.ids;
+						for (var i = 0; i < jsonlist.length; i++)
+							hintObject(jsonlist[i], BABYLON.Color3.White());
+					}
+					if (e.data.startsWith("hideTouch")) {
+						hintRAllObjects();
+					}
+
+					if (e.data.startsWith("showCollisionFeedback")) {
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+
+						if (jsonlist['disappear']) {
+							showCollisionFeedback(jsonlist["obj_1"], jsonlist["obj_2"]);
+						}
+						else {
+							showCollisionFeedbackNoDisappear(jsonlist["obj_1"], jsonlist["target_location"]);
+						}
+
+					}
+
+					if (e.data.startsWith("performAnimation")) {
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						jsonlist = jsonlist.objects_animated;
+
+						for (var i =  0; i < jsonlist.length; i++) {
+							if (jsonlist[i].animation == "shake") {
+								if (jsonlist[i].loop == "true") {
+									(function() {
+										var id = "m_" + jsonlist[i].object_id;
+										setInterval(function() {
+											shakeObject(id);		
+										}, 4000);
+										
+										shakeObject(id);
+									})();
+								}
+								else {
+									shakeObject("m_" + jsonlist[i].object_id);
+								}
+							}
+
+							if (jsonlist[i].animation == "jump") {
+								if (jsonlist[i].loop == "true") {
+									(function() {
+										var id = "m_" + jsonlist[i].object_id;
+										setInterval(function() {
+											jumpObject(id);		
+										}, 2500);
+										
+										jumpObject(id);
+									})();
+								}
+								else {
+									jumpObject("m_" + jsonlist[i].object_id);
+								}
+							}
+
+							if (jsonlist[i].animation == "roll") {
+								if (jsonlist[i].loop == "true") {
+									(function() {
+										var id = "m_" + jsonlist[i].object_id;
+										setInterval(function() {
+											rollObject(id);		
+										}, 4200);
+										
+										rollObject(id);
+									})();
+								}
+								else {
+									rollObject("m_" + jsonlist[i].object_id);
+								}
+							}							
+						}
+					}
+
+					if (e.data.startsWith("getCurrentScene"))
+					{
+						save_scene(true);
+						sendText("call:tablet.interactionmanager.setCurrentScene|" + JSON.stringify(jsontmp));
+					}
+						
+					if (e.data.startsWith("showTablet"))
+						showTablet();
+					if (e.data.startsWith("hideTablet"))
+						hideTablet();
+					if (e.data.startsWith("hideStars"))
+						hideStars();
+					if (e.data.startsWith("showStars"))
+						showStars();
+					if (e.data.startsWith("resetCamera"))
+						resetCamera();
+					if (e.data.startsWith("moveCamera")) {
+						msgtmp = e.data.split("|");
+						jsonlist = JSON.parse(msgtmp[1]);
+						moveCamera(jsonlist.alpha, jsonlist.beta, jsonlist.radius, jsonlist.x, jsonlist.y, jsonlist.z);
+					}
+				}
+			}
+			socket.onclose = function (e) {
+				console.log("Connection closed (wasClean = " + e.wasClean + ", code = " + e.code + ", reason = '" + e.reason + "')");
+				isopen = false;
+				socket = null;
+			}
+
+		};
+		function copyToClipboard(text) {
+			if (window.clipboardData && window.clipboardData.setData) {
+				// IE specific code path to prevent textarea being shown while dialog is visible.
+				return clipboardData.setData("Text", text);
+
+			} else if (document.queryCommandSupported && document.queryCommandSupported("copy")) {
+				var textarea = document.createElement("textarea");
+				textarea.textContent = text;
+				textarea.style.position = "fixed";  // Prevent scrolling to bottom of page in MS Edge.
+				document.body.appendChild(textarea);
+				textarea.select();
+				try {
+					return document.execCommand("copy");  // Security exception may be thrown by some browsers.
+				} catch (ex) {
+					console.warn("Copy to clipboard failed.", ex);
+					return false;
+				} finally {
+					document.body.removeChild(textarea);
+				}
+			}
+		}
+		function showStars() {
+			// Emitters
+			var emitter0 = BABYLON.Mesh.CreateBox("emitter0", 10, scene);
+			emitter0.position = new BABYLON.Vector3(0, 0, 150);
+			emitter0.isVisible = false;
+
+			// Custom shader for particles
+			BABYLON.Effect.ShadersStore["myParticleFragmentShader"] =
+				"#ifdef GL_ES\n" +
+				"precision highp float;\n" +
+				"#endif\n" +
+
+				"varying vec2 vUV;\n" +                     // Provided by babylon.js
+				"varying vec4 vColor;\n" +                  // Provided by babylon.js
+
+				"uniform sampler2D diffuseSampler;\n" +     // Provided by babylon.js
+				"uniform float time;\n" +                   // This one is custom so we need to declare it to the effect
+
+				"void main(void) {\n" +
+				"vec2 position = vUV;\n" +
+
+				"float color = 0.0;\n" +
+				"vec2 center = vec2(0.5, 0.5);\n" +
+
+				"color = sin(distance(position, center) * 10.0+ time * vColor.g);\n" +
+
+				"vec4 baseColor = texture2D(diffuseSampler, vUV);\n" +
+
+				"gl_FragColor = baseColor * vColor * vec4( vec3(color, color, color), 1.0 );\n" +
+				"}\n" +
+				"";
+
+			// Effect
+			var effect = engine.createEffectForParticles("myParticle", ["time"]);
+
+			// Particles
+			particleSystem = new BABYLON.ParticleSystem("particles", 4000, scene, effect);
+			particleSystem.particleTexture = new BABYLON.Texture("textures/star.png", scene);
+			particleSystem.minSize = 10;
+			particleSystem.maxSize = 70;
+			particleSystem.minLifeTime = 0.5;
+			particleSystem.maxLifeTime = 10;
+			particleSystem.minEmitPower = 22;
+			particleSystem.maxEmitPower = 80;
+			particleSystem.emitter = emitter0;
+			particleSystem.emitRate = 10;
+			particleSystem.blendMode = BABYLON.ParticleSystem.BLENDMODE_ONEONE;
+			particleSystem.direction1 = new BABYLON.Vector3(-1, 1, -1);
+			particleSystem.direction2 = new BABYLON.Vector3(1, 1, 1);
+			particleSystem.color1 = new BABYLON.Color4(1, 1, 0, 0);
+			particleSystem.color2 = new BABYLON.Color4(1, 0.5, 0, 1);
+			particleSystem.gravity = new BABYLON.Vector3(0, -6.0, 0);
+			particleSystem.start();
+
+			var time = 0;
+			var order = 0.1;
+
+			effect.onBind = function () {
+				effect.setFloat("time", time);
+
+				time += order;
+
+				if (time > 100 || time < 0) {
+					order *= -1;
+				}
+			};
+		}
+		function hideStars() {
+			particleSystem.stop();
+		}
+		function hintObject(objectID, color) {
+			var objtmp = scene.getMeshByID(objectID);
+
+			// Might be tag
+			if (objtmp == null) {
+				scene.getMeshesByTags(objectID, function (mesh) {
+					hl.addMesh(mesh, color);
+				});
+			}
+
+			else
+				hl.addMesh(objtmp, color);
+		}
+		function startAnimation(objectID) {
+			var objtmp = scene.getMeshByID(objectID);
+
+		}
+		function hintRObject(objectID) {
+			var objtmp = scene.getMeshByID(objectID);
+
+			// Might be tag
+			if (objtmp == null) {
+				scene.getMeshesByTags(objectID, function (mesh) {
+					hl.removeMesh(mesh);
+				});
+			}
+
+			else
+				hl.removeMesh(objtmp);
+		}
+
+		function hintRAllObjects() {
+			hl.dispose();
+			hl = new BABYLON.HighlightLayer("hl1", scene);
+		}
+
+		function jumpObject(obj_id) {
+			var mesh = scene.getMeshByID(obj_id);
+			existingYcoords[obj_id] = mesh.position.y;
+
+			moveObjectbyID(obj_id, mesh.position.x, existingYcoords[obj_id] + 50, mesh.position.z, 0.25, "false");
+
+			setTimeout(function() {
+				moveObjectbyID(obj_id, mesh.position.x, existingYcoords[obj_id], mesh.position.z, 0.25, "false");
+			}, 300);
+		}
+
+		function shakeObject(obj_id, shake_counter = 0) {
+			console.log(shake_counter);
+
+			if (shake_counter <= 3) {
+				var mesh = scene.getMeshByID(obj_id);
+				moveObjectbyID(obj_id, mesh.position.x, mesh.position.y, mesh.position.z - 10, 0.25, "false");
+
+				setTimeout(function() {
+					moveObjectbyID(obj_id, mesh.position.x, mesh.position.y, mesh.position.z + 10, 0.25, "false");				
+
+					setTimeout(function() {
+						shake_counter += 1;
+
+						shakeObject(obj_id, shake_counter);
+					}, 250);
+				}, 250);
+			}
+		}
+
+		function rollObject(obj_id) {
+			var mesh = scene.getMeshByID(obj_id);
+			moveObjectbyID(obj_id, mesh.position.x - 50, mesh.position.y, mesh.position.z + 50, 1, "false");
+			rotateObjectbyID(obj_id, 0, 6.25, 6.25, 1, 'false');
+
+			setTimeout(function() {
+				moveObjectbyID(obj_id, mesh.position.x + 50, mesh.position.y, mesh.position.z + 50, 1, "false");				
+				rotateObjectbyID(obj_id, 0, 6.25, 6.25, 1, 'false');
+
+				setTimeout(function() {
+					moveObjectbyID(obj_id, mesh.position.x + 50, mesh.position.y, mesh.position.z - 50, 1, "false");				
+					rotateObjectbyID(obj_id, 0, 6.25, 6.25, 1, 'false');
+
+					setTimeout(function() {
+						moveObjectbyID(obj_id, mesh.position.x - 50, mesh.position.y, mesh.position.z - 50, 1, "false");				
+						rotateObjectbyID(obj_id, 0, 6.25, 6.25, 1, 'false');
+
+					}, 1000);
+
+				}, 1000);
+			}, 1000);
+		}
+
+		function showCollisionFeedback(obj_1, obj_2) {			
+			var mesh2 = scene.getMeshByID(obj_2);
+
+			moveObjectbyID(obj_1, mesh2.position.x, mesh2.position.y + 40, mesh2.position.z + 20, 0.5, "false");
+			setTimeout(function() { 
+				hideObject(obj_1);
+			}, 2000);
+		}
+
+		function showCollisionFeedbackNoDisappear(obj_1, target_location) {
+			moveObjectbyID(obj_1, target_location["x"], target_location["y"], target_location["z"], 0.5, "false");
+		}
+
+		function disableObject(objectID) {
+			var objtmp = scene.getMeshByID(objectID);
+			if (objtmp != null) {
+				/*objtmp.material.diffuseColor.b = 0.2;
+				objtmp.material.diffuseColor.g = 0.2;
+				objtmp.material.diffuseColor.r = 0.2;*/
+			}
+
+		}
+
+		function enableObject(objectID) {
+			var objtmp = scene.getMeshByID(objectID);
+			if (objtmp != null) {
+				objtmp.material.diffuseColor.b = 1;
+				objtmp.material.diffuseColor.g = 1;
+				objtmp.material.diffuseColor.r = 1;
+			}
+		}
+
+		function makeStatic(objectID) {
+			var objtmp = scene.getMeshByID(objectID);
+			if (objtmp != null) {
+				objtmp.isPickable = false;
+				disableObject(objectID);
+			}
+		}
+
+		function makeMovable(objectID) {
+			var objtmp = scene.getMeshByID(objectID);
+			if (objtmp != null) {
+				objtmp.isPickable = true;
+				enableObject(objectID);
+			}
+		}
+
+		function showTablet() {
+			light.intensity = 1.3;
+			clicksEnabled = true;
+			scene.clearColor = new BABYLON.Color3(100 / 255, 1, 1);
+		}
+		function hideTablet() {
+			light.intensity = 0.03;
+			clicksEnabled = false;
+			scene.clearColor = new BABYLON.Color3(0, 0, 0);
+			hintRAllObjects();
+		}
+		function hideObject(objectID) {
+			var objtmp = scene.getMeshByID(objectID);
+			if (objtmp != null) {
+				scene.stopAnimation(objtmp); // stop all animations that might be playing
+				objtmp.metadata = objtmp.position.y;
+				objtmp.position.y = -10000; //put it under the ground to hide it
+			}
+		}
+		function showObject(objectID) { //function for showing a single object
+			var objtmp = scene.getMeshByID(objectID);
+			if (objtmp != null) objtmp.position.y = objtmp.metadata; //more sufficient way to update y position
+		}
+		function sendText(txt) {
+			if (isopen) {
+				socket.send(txt);
+				console.log("Sending to socket:" + txt);
+			} else {
+				console.log("Connection not opened.")
+			}
+		};
+
+		function moveObjectbyID(objID, posX, posY, posZ, timeOut, loop) {
+			// moves object to specific location
+			var loopmode = BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT;
+			
+			if (loop.toLowerCase() == 'true')
+			{
+				loopmode = BABYLON.Animation.ANIMATIONLOOPMODE_CYCLE;
+			}
+
+			var objtmp = scene.getMeshByID(objID);
+            BABYLON.Animation.CreateAndStartAnimation(objID + 'animation', objtmp, 'position', 30, timeOut * 30, objtmp.position, new BABYLON.Vector3(posX, posY, posZ), loopmode);//ANIMATIONLOOPMODE_CONSTANT);
+		};
+
+		function rotateObjectbyID(objID, rotX, rotY, rotZ, timeOut, loop) {
+			// moves object to specific location
+			var loopmode = BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT;
+			
+			if (loop.toLowerCase() == 'true')
+			{
+				loopmode = BABYLON.Animation.ANIMATIONLOOPMODE_CYCLE;
+			}
+
+			var objtmp = scene.getMeshByID(objID);
+			console.log(objtmp.rotation);
+            BABYLON.Animation.CreateAndStartAnimation(objID + 'animation', objtmp, 'rotation', 30, timeOut * 30, objtmp.rotation, new BABYLON.Vector3(objtmp.rotation.x + rotX, objtmp.rotation.y + rotY, objtmp.rotation.z + rotZ), loopmode);//ANIMATIONLOOPMODE_CONSTANT);
+		};
+
+		function moveCamera(alpha, beta, radius, posX, posY, posZ) {
+			camera.alpha = alpha;
+			camera.radius = radius;
+			camera.beta = beta;
+			camera.position.x = posX;
+			camera.position.y = posY;
+			camera.position.z = posZ;
+
+		}
+		function resetCamera() {
+			moveCamera(90 * 0.01745329252, 55 * 0.01745329252, 450, 0, 0, 0);
+		}
+		function handleKeyUp(evt) {
+			if (evt.keyCode == 13) { //show hide the buttons
+				if (editor == false) {
+					document.getElementById('loadScene').style.visibility = 'visible';
+					document.getElementById('createScene').style.visibility = 'visible';
+					document.getElementById('loadObject').style.visibility = 'visible';
+					document.getElementById('createObject').style.visibility = 'visible';
+					document.getElementById('savejson').style.visibility = 'visible';
+					document.getElementById('debugbtn').style.visibility = 'visible';
+					document.getElementById('anibtn').style.visibility = 'visible';
+					editor = true;
+				}
+				else {
+					document.getElementById('loadScene').style.visibility = 'hidden';
+					document.getElementById('createScene').style.visibility = 'hidden';
+					document.getElementById('loadObject').style.visibility = 'hidden';
+					document.getElementById('createObject').style.visibility = 'hidden';
+					document.getElementById('savejson').style.visibility = 'hidden';
+					document.getElementById('debugbtn').style.visibility = 'hidden';
+					document.getElementById('anibtn').style.visibility = 'hidden';
+					editor = false;
+				}
+			}
+			if ((currentMesh != "") && (currentMesh != null)) {
+				console.log("Mesh ID:" + currentMesh.id)
+				console.log("X: " + currentMesh.position.x + " Y: " + currentMesh.position.y + " Z: " + currentMesh.position.z);
+				if(currentMesh.id.startsWith("Ani")) //multiple meshes so use quad
+					console.log("RotW: " + currentMesh.rotationQuaternion.w +  "rotX: " + currentMesh.rotationQuaternion.x + " rotY: " + currentMesh.rotationQuaternion.y + " rotZ: " + currentMesh.rotationQuaternion.z);
+				else
+					console.log("rotX: " + currentMesh.rotation.x + " rotY: " + currentMesh.rotation.y + " rotZ: " + currentMesh.rotation.z);
+				console.log("scaleX: " + currentMesh.scaling.x + " scaleY: " + currentMesh.scaling.y + " scaleZ: " + currentMesh.scaling.z);
+			}
+		}
+		function save_scene(active)
+		{
+			var imagetmp = "none";
+			jsontmp = {};
+			// first the ground
+			jsontmp.ground = groundfloor;
+			// camera perspective
+			jsontmp.camera = { "Alpha": camera.alpha, "Beta": camera.beta, "Radius": camera.radius, "PositionX": camera.position.x, "PositionY": camera.position.y, "PositionZ": camera.position.z };
+			//loadable objects
+			jsontmp.loadable_objects = [];
+			var tmopobj;
+			for (i = 0; i < loadlist.length; i++) {
+                tmpobj = scene.getMeshByID(loadlist[i]);
+                var tmp_id = tmpobj.id;
+                if (tmpobj.id.includes("box3d")) {
+                    tmpSplit = tmpobj.id.split("_");
+                    tmp_id = tmpSplit[0] + "_" + tmpSplit[1] + "_" + tmpSplit[2] + "?" + tmpSplit[3] + "_" + tmpSplit[4];
+                }
+				var tmp_obj = {
+						"id": tmp_id,
+						"filename": tmpobj.name,
+						"position": { "x": tmpobj.position.x, "y": tmpobj.position.y, "z": tmpobj.position.z },
+						"scaling": { "x": tmpobj.scaling.x, "y": tmpobj.scaling.y, "z": tmpobj.scaling.z },
+					};
+
+				if (tmpobj.id.startsWith("Ani")) //multiple meshes so use quaternion
+					tmp_obj.rotation = { "w": tmpobj.rotationQuaternion.w / radi, "x": tmpobj.rotationQuaternion.x / radi, "y": tmpobj.rotationQuaternion.y / radi, "z": tmpobj.rotationQuaternion.z / radi };
+				else
+					tmp_obj.rotation = { "x": tmpobj.rotation.x / radi, "y": tmpobj.rotation.y / radi, "z": tmpobj.rotation.z / radi };
+				if (active == true)
+				{
+					tmp_obj.visible = tmpobj.position.y > -1000;
+					if(tmpobj.position.y < -1000)
+						tmp_obj.position.y = tmpobj.metadata;
+					tmp_obj.animation = !(typeof tmpobj.skeleton === "undefined");
+					//tmp_obj.collisionEnabled = !(tmpobj.name.startsWith("Wall"));			
+					tmp_obj.collisionEnabled = "true";
+				}
+				else
+				{
+					tmp_obj.visible = "true";
+					tmp_obj.animation = "false";
+					tmp_obj.collisionEnabled = "true";
+				}
+
+				jsontmp.loadable_objects.push(tmp_obj);
+
+			};
+			jsontmp.creatable_objects = [];
+			for (i = 0; i < createlist.length; i++) {
+				tmpobj = scene.getMeshByID(createlist[i]);
+
+				try { imagetmp = tmpobj.material.diffuseTexture.name; } //image exists
+				catch (err) { imagetmp = "none"; } //image doesnt exist
+
+                var uwdsCreateVal = "none";
+                var _size = {};
+                if (tmpobj.id.includes("s_lake")) {
+                    uwdsCreateVal = "sphere";
+                    _size = {
+                        "diameter": 10 * tmpobj.scaling.x,
+                        "height": 0.1,
+                        "tessellation": 50
+                    }
+
+                } else if (tmpobj.id.includes("s_foodtray") || (tmpobj.id.includes("s_shelf"))) {
+                    uwdsCreateVal = "box";
+                    _size = {
+                        "width": 50 * tmpobj.scaling.x,
+                        "height": 50 * tmpobj.scaling.y,
+                        "depth": 2* tmpobj.scaling.z
+                    }
+                }
+
+				jsontmp.creatable_objects.push(
+					{
+						"id": tmpobj.id,
+						"type": tmpobj.name,
+						"collisionEnabled": !(tmpobj.id.startsWith("s_shelf")),
+						"position": { "x": tmpobj.position.x, "y": tmpobj.position.y, "z": tmpobj.position.z },
+						"rotation": { "x": tmpobj.rotation.x / radi, "y": tmpobj.rotation.y / radi, "z": tmpobj.rotation.z / radi },
+                        "scaling": { "x": tmpobj.scaling.x, "y": tmpobj.scaling.y, "z": tmpobj.scaling.z },
+                        "size": _size,
+						"visible": (tmpobj.position.y > -1000),
+                        "image": imagetmp,
+                        "uwdsCreate": uwdsCreateVal,
+						"color": {
+							"diffuse": { "r": tmpobj.material.diffuseColor.r, "g": tmpobj.material.diffuseColor.g, "b": tmpobj.material.diffuseColor.b },
+							"specular": { "r": tmpobj.material.specularColor.r, "g": tmpobj.material.specularColor.g, "b": tmpobj.material.specularColor.b }
+						}
+					}
+
+				);
+
+			};
+
+			var result = copyToClipboard(JSON.stringify(jsontmp));
+			console.log("Json scene copied to clipboard:", result);
+
+		}
+
+		$('#loadScene').click(function () {
+			var loadjson = prompt("Please paste the whole json file to load:", "sample");
+			if (loadjson != null && loadjson != "") {
+				if (loadjson == "sample") {
+					loadjson = jsonstrSample; //use default json if sample is given	
+					jsonlist = loadjson;
+				}
+				else
+					jsonlist = JSON.parse(loadjson);
+				scene = createScene();
+				scene.clearColor = new BABYLON.Color3(100 / 255, 1, 1);
+				engine.runRenderLoop(function () { scene.render(); });
+			};
+		});
+		$('#createScene').click(function () {
+			groundfloor = prompt("Please enter the floor filename:", "grass.jpg");
+			if (groundfloor != null && groundfloor != "") {
+				jsonstr = { "ground": groundfloor };
+
+				jsonlist = jsonstr;
+				scene = createScene();
+				scene.clearColor = new BABYLON.Color3(100 / 255, 1, 1);
+				engine.runRenderLoop(function () { scene.render(); });
+
+			}
+		});
+		$('#loadObject').click(function () {
+			var loadmesh = prompt("Please enter the name of the mesh:", "giraffe");
+			if (loadmesh != null && loadmesh != "") {
+				BABYLON.SceneLoader.ImportMesh("", "models/", loadmesh + ".babylon", scene, function (newMeshes, particleSystems, skeletons) {
+					newMeshes[0].position = new BABYLON.Vector3(0, 0, 0);
+					newMeshes[0].rotation = new BABYLON.Vector3(0, 0, 0);
+			
+					// if(newMeshes.length>1)
+					// {
+					// 	var m = BABYLON.MeshBuilder.CreateBox('parent' + loadmesh + loadcounter,1500, scene);
+					// 	m.isVisible = false;
+					// }
+					for (i = 0; i < newMeshes.length; i++) {
+						newMeshes[i].computeWorldMatrix(true);
+						if (newMeshes.length > 1) //animation so multiple meshes
+						{
+							newMeshes[i].id = "Ani_" + i + "_" + loadmesh + "_" + loadcounter;
+							//newMeshes[i].parent = m;
+						}
+						else
+							newMeshes[i].id = "temp_" + loadmesh + i + "_" + loadcounter;
+						newMeshes[i].name = loadmesh;
+						try {newMeshes[i].convertToFlatShadedMesh();}catch (err) { }
+						loadlist.push(newMeshes[i].id);
+						//scene.stopAnimation(newMeshes[i]);
+					}
+					loadcounter++;
+					//scene.beginAnimation(skeletons[0], 0, 100, true, 1.0);
+						currentMesh = newMeshes[0];
+				});
+			}
+		});
+
+
+		$('#savejson').click(function () {
+			save_scene(false);
+		});
+
+		$('#debugbtn').click(function () {
+			if (scene.debugLayer.isVisible() == false)
+				scene.debugLayer.show();
+			else
+				scene.debugLayer.hide();
+		});
+		$('#anibtn').click(function () {
+			if(groupMode == false)
+			{
+				groupMode = true;
+				console.log("Group mode on");
+			}
+			else
+			{
+				groupMode = false;
+				console.log("Group mode off");
+			}
+				
+			
+		});
+
+
+
+		$('#createObject').click(function () {
+			var createmesh = prompt("Please enter the type of the mesh to create (plane, cylinder, sphere:", "plane");
+			if (createmesh == "plane") {
+				var plane = BABYLON.MeshBuilder.CreateBox("temp_plane_" + createcounter, { height: 50, width: 50 }, scene);
+				var planemat = new BABYLON.StandardMaterial("texturePlane", scene);
+				plane.rotation = new BABYLON.Vector3(0, 0, 0);
+				plane.position = new BABYLON.Vector3(0, 0, 0);
+				plane.id = "temp_plane_" + createcounter++;
+				plane.name = "plane";
+				createlist.push(plane.id);
+				plane.material = planemat;
+				currentMesh = plane;
+			}
+			else if (createmesh == "cylinder") {
+				var cylinder = BABYLON.MeshBuilder.CreateCylinder("temp_cylinder_" + createcounter, { diameter: 10, height: 5, tessellation: 50 }, scene);
+				var matcylinder = new BABYLON.StandardMaterial("texturePlane", scene);
+				cylinder.material = matcylinder;
+				cylinder.position = new BABYLON.Vector3(0, 0, 0);
+				cylinder.rotation = new BABYLON.Vector3(0, 0, 0);
+				cylinder.id = "temp_cylinder_" + createcounter++;
+				cylinder.name = "cylinder";
+				createlist.push(cylinder.id);
+				currentMesh = cylinder;
+			}
+			else if (createmesh == "sphere") {
+				sphere = BABYLON.Mesh.CreateSphere("temp_sphere_" + createcounter, 20, 55, scene);
+				var spheremat = new BABYLON.StandardMaterial("texturePlane", scene);
+				sphere.position = new BABYLON.Vector3(0, 0, 0);
+				sphere.id = "temp_sphere_" + createcounter++;
+				createlist.push(sphere.id);
+				sphere.name = "sphere";
+				sphere.material = spheremat;
+				currentMesh = sphere;
+			}
+
+		});
+		var createScene = function () {
+			function setCharAt(str,index,chr) {
+    			if(index > str.length-1) return str;
+    			return str.substr(0,index) + chr + str.substr(index+1);
+			}
+			var scene = new BABYLON.Scene(engine);
+			hl = new BABYLON.HighlightLayer("hl1", scene);
+			// Logging
+			logger = "\r\nStarting scene at:" + new Date().toLocaleString() + "\r\n";
+
+			//scene.debugLayer.show();
+
+
+			// Light
+			light = new BABYLON.DirectionalLight("dir01", new BABYLON.Vector3(-0.2, -1, -1), scene);
+			light.position = new BABYLON.Vector3(90, 90, 200);
+			light.intensity = 1.3;
+			//Create Camera 
+			camera = new BABYLON.ArcRotateCamera("Camera", 90 * 0.01745329252, 55 * 0.01745329252, 450, new BABYLON.Vector3(0, 0, 0), scene);
+
+			// check if perspective is available from json file
+			if (typeof jsonlist.camera != "undefined") {
+				camera.alpha = jsonlist.camera.Alpha;
+				camera.beta = jsonlist.camera.Beta;
+				camera.radius = jsonlist.camera.Radius;
+				camera.position.x = jsonlist.camera.PositionX;
+				camera.position.y = jsonlist.camera.PositionY;
+				camera.position.z = jsonlist.camera.PositionZ;
+			}
+			// Ground
+			var ground = BABYLON.Mesh.CreateGround("ground", 1600, 1700, 1, scene, false);
+			groundfloor = jsonlist.ground
+			//Creation of a repeated textured material
+			var materialPlane = new BABYLON.StandardMaterial("texturePlane", scene);
+			materialPlane.diffuseTexture = new BABYLON.Texture("textures/" + jsonlist.ground, scene); //use json object for texture
+			materialPlane.diffuseTexture.uScale = 15.0;//Repeat x times on the Vertical Axes
+			materialPlane.diffuseTexture.vScale = 15.0;//Repeat x times on the Horizontal Axes
+			materialPlane.backFaceCulling = false;//Always show the front and the back of an element
+			ground.material = materialPlane;
+			ground.checkCollisions = true;
+			scene.collisionsEnabled = true;
+
+			var collidewith;
+			var Obstacles = [];
+
+			//getmeshbyID
+			// loadable meshes
+			if (jsonlist.loadable_objects != null) {
+				if (jsonlist.loadable_objects.length > 0) loadobjects(0);
+
+				function loadobjects(i) {
+
+					BABYLON.SceneLoader.ImportMesh("", "models/", jsonlist.loadable_objects[i].filename + ".babylon", scene, function (newMeshes, particleSystems, skeletons) {
+
+						for (k = 0; k < newMeshes.length; k++) {
+							try { newMeshes[k].position = new BABYLON.Vector3(parseFloat(jsonlist.loadable_objects[i + k].position.x), parseFloat(jsonlist.loadable_objects[i + k].position.y), parseFloat(jsonlist.loadable_objects[i + k].position.z)); } catch (err) { }
+							if(newMeshes.length==1) //only one mesh so use normal rotation
+								try { newMeshes[k].rotation = new BABYLON.Vector3(parseFloat(jsonlist.loadable_objects[i + k].rotation.x) * radi, parseFloat(jsonlist.loadable_objects[i + k].rotation.y) * radi, parseFloat(jsonlist.loadable_objects[i + k].rotation.z) * radi); } catch (err) { }
+							else
+								try { newMeshes[k].rotationQuaternion = new BABYLON.Quaternion(parseFloat(jsonlist.loadable_objects[i + k].rotation.x) * radi, parseFloat(jsonlist.loadable_objects[i + k].rotation.y) * radi, parseFloat(jsonlist.loadable_objects[i + k].rotation.z) * radi, parseFloat(jsonlist.loadable_objects[i + k].rotation.w) * radi); } catch (err) { }
+							try { newMeshes[k].scaling = new BABYLON.Vector3(parseFloat(jsonlist.loadable_objects[i + k].scaling.x), parseFloat(jsonlist.loadable_objects[i + k].scaling.y), parseFloat(jsonlist.loadable_objects[i + k].scaling.z)); } catch (err) { }
+
+							if ((jsonlist.loadable_objects[i + k].id.indexOf("?") > -1) && (editor == false)) // ? found in id
+							{
+								var tmpstr = jsonlist.loadable_objects[i + k].id.split("?");
+								newMeshes[k].id = tmpstr[0] + "_" + tmpstr[1];
+							}
+							else
+								newMeshes[k].id = jsonlist.loadable_objects[i + k].id;
+
+							newMeshes[k].name = jsonlist.loadable_objects[i + k].filename;
+							loadlist.push(newMeshes[k].id);
+							//  make static by default if editor = false;
+							if (newMeshes[k].id.startsWith("m_") && newMeshes[k].material !== null && editor == false) {
+								try {					
+									/*newMeshes[k].material.diffuseColor.b = 0.2;
+									newMeshes[k].material.diffuseColor.g = 0.2;
+									newMeshes[k].material.diffuseColor.r = 0.2;*/
+								}
+
+								// Sometimes seems to give errors (for monkey holding banana in this case..)
+								catch (err) { }
+							}
+
+							if (editor == false)
+								newMeshes[k].isPickable = false;
+
+							if (jsonlist.loadable_objects[i + k].collisionEnabled == true) Obstacles.push(newMeshes[k]);
+							if ((jsonlist.loadable_objects[i + k].visible == false) && (editor == false)) //check if object is visible or editor is no enabled
+							{
+								newMeshes[k].metadata = newMeshes[k].position.y; //store the position in the name tag
+								newMeshes[k].position.y = -10000; //put it under the ground to hide it
+							}
+							console.log("ID:" + jsonlist.loadable_objects[i + k].id);
+							try {
+								if (jsonlist.loadable_objects[i + k].animation == true)
+								{
+									for(l = 0; l < skeletons.length; l++)
+									{
+										scene.beginAnimation(skeletons[l], 0, 100, true, 1.0);
+									}
+								}
+								else
+									scene.stopAnimation(newMeshes[k]);
+							} catch (err) { }
+							if (jsonlist.loadable_objects[i].tag !== undefined) {
+								BABYLON.Tags.EnableFor(newMeshes[k]);
+								newMeshes[k].addTags(jsonlist.loadable_objects[i + k].tag);
+							}
+							try {newMeshes[k].convertToFlatShadedMesh();}catch (err) { }
+							
+						}
+						i=i+k-1;
+						i++;
+						loadcounter++;
+						if (i < jsonlist.loadable_objects.length)
+							loadobjects(i); //call the function for next object
+					});
+
+
+				}
+			}
+			if (jsonlist.creatable_objects != null) {
+				if (jsonlist.creatable_objects.length > 0) createobjects(0);
+				function createobjects(j) {
+					var generatedobj = null;
+
+					if (jsonlist.creatable_objects[j].type == "plane") // surface e.g. box
+					{
+						var plane = BABYLON.MeshBuilder.CreateBox(jsonlist.creatable_objects[j].id, { height: 50, width: 50 }, scene);
+						plane.name = "plane";
+						var planemat = new BABYLON.StandardMaterial("texturePlane", scene);
+						try { plane.scaling = new BABYLON.Vector3(parseFloat(jsonlist.creatable_objects[j].scaling.x), parseFloat(jsonlist.creatable_objects[j].scaling.y), parseFloat(jsonlist.creatable_objects[j].scaling.z)); } catch (err) { }
+						try { plane.rotation = new BABYLON.Vector3(jsonlist.creatable_objects[j].rotation.x * radi, jsonlist.creatable_objects[j].rotation.y * radi, jsonlist.creatable_objects[j].rotation.z * radi); } catch (err) { }
+						try { plane.position = new BABYLON.Vector3(jsonlist.creatable_objects[j].position.x, jsonlist.creatable_objects[j].position.y, jsonlist.creatable_objects[j].position.z); } catch (err) { }
+						try { plane.id = jsonlist.creatable_objects[j].id; } catch (err) { }
+						createlist.push(plane.id);
+
+						// aplpy image if exists
+						if ((jsonlist.creatable_objects[j].image != "none") && (jsonlist.creatable_objects[j].image != null)) //image exists
+						{
+							try {
+								planemat.diffuseTexture = new BABYLON.Texture(jsonlist.creatable_objects[j].image, scene);
+								planemat.specularColor = new BABYLON.Color3(0, 0, 0);
+								planemat.backFaceCulling = false;//Allways show the front and the back of an element
+								planemat.diffuseTexture.hasAlpha = true;
+							}
+							catch (err) { console.log("Image for:" + plane.id + " could not be applied"); }
+						}
+						else //no image, just apply colors
+						{
+							try {
+								planemat.diffuseColor = new BABYLON.Color3(jsonlist.creatable_objects[j].color.diffuse.r, jsonlist.creatable_objects[j].color.diffuse.g, jsonlist.creatable_objects[j].color.diffuse.b);
+								planemat.specularColor = new BABYLON.Color3(jsonlist.creatable_objects[j].color.specular.r, jsonlist.creatable_objects[j].color.specular.g, jsonlist.creatable_objects[j].color.specular.b);
+							}
+							catch (err) { console.log("No color for:" + plane.id + ". Using defaults"); }
+						}
+						plane.material = planemat;
+						if (editor == false)
+							plane.isPickable = false;
+						if (jsonlist.creatable_objects[j].collisionEnabled == true) Obstacles.push(plane);
+						if ((jsonlist.creatable_objects[j].visible == false) && (editor == false)) //apply visibility on object
+						{
+							plane.metadata = plane.position.y;
+							plane.position.y = -10000;
+						}
+
+						generatedobj = plane;
+					}
+
+					if (jsonlist.creatable_objects[j].type == "cylinder") //  cylinder
+					{
+						var cylinder = BABYLON.MeshBuilder.CreateCylinder(jsonlist.creatable_objects[j].id, { diameter: 10, height: 5, tessellation: 50 }, scene);
+						cylinder.name = "cylinder";
+						var matcylinder = new BABYLON.StandardMaterial("texturePlane", scene);
+						try { cylinder.id = jsonlist.creatable_objects[j].id; } catch (err) { }
+						try { cylinder.scaling = new BABYLON.Vector3(parseFloat(jsonlist.creatable_objects[j].scaling.x), parseFloat(jsonlist.creatable_objects[j].scaling.y), parseFloat(jsonlist.creatable_objects[j].scaling.z)); } catch (err) { }
+						try { cylinder.position = new BABYLON.Vector3(jsonlist.creatable_objects[j].position.x, jsonlist.creatable_objects[j].position.y, jsonlist.creatable_objects[j].position.z); } catch (err) { }
+						try { cylinder.rotation = new BABYLON.Vector3(jsonlist.creatable_objects[j].rotation.x * radi, jsonlist.creatable_objects[j].rotation.y * radi, jsonlist.creatable_objects[j].rotation.z * radi); } catch (err) { }
+
+						createlist.push(cylinder.id);
+						// aplpy image if exists
+						if ((jsonlist.creatable_objects[j].image != "none") && (jsonlist.creatable_objects[j].image != null)) //image exists
+						{
+							try {
+								matcylinder.diffuseTexture = new BABYLON.Texture(jsonlist.creatable_objects[j].image, scene);
+								matcylinder.specularColor = new BABYLON.Color3(0, 0, 0);
+								matcylinder.backFaceCulling = false;//Allways show the front and the back of an element
+								matcylinder.diffuseTexture.hasAlpha = true;
+							}
+							catch (err) { console.log("Image for:" + cylinder.id + " could not be applied"); }
+						}
+						else //no image, just apply colors
+						{
+							try {
+								matcylinder.diffuseColor = new BABYLON.Color3(jsonlist.creatable_objects[j].color.diffuse.r, jsonlist.creatable_objects[j].color.diffuse.g, jsonlist.creatable_objects[j].color.diffuse.b);
+								matcylinder.specularColor = new BABYLON.Color3(jsonlist.creatable_objects[j].color.specular.r, jsonlist.creatable_objects[j].color.specular.g, jsonlist.creatable_objects[j].color.specular.b);
+							}
+							catch (err) { console.log("No color for:" + cylinder.id + ". Using defaults"); }
+						}
+						cylinder.material = matcylinder;
+						if (editor == false)
+							cylinder.isPickable = false;
+						if (jsonlist.creatable_objects[j].collisionEnabled == true) Obstacles.push(cylinder);
+						if ((jsonlist.creatable_objects[j].visible == false) && (editor == false)) //apply visibility on object
+						{
+							cylinder.metadata = cylinder.position.y;
+							cylinder.position.y = -10000;
+						}
+
+						generatedobj = cylinder;
+					}
+					if (jsonlist.creatable_objects[j].type == "sphere") //  sphere
+					{
+						sphere = BABYLON.Mesh.CreateSphere(jsonlist.creatable_objects[j].id, 20, 55, scene);
+						sphere.name = "sphere"
+						var spheremat = new BABYLON.StandardMaterial("texturePlane", scene);
+						try { sphere.scaling = new BABYLON.Vector3(parseFloat(jsonlist.creatable_objects[j].scaling.x), parseFloat(jsonlist.creatable_objects[j].scaling.y), parseFloat(jsonlist.creatable_objects[j].scaling.z)); } catch (err) { }
+						try { sphere.position = new BABYLON.Vector3(jsonlist.creatable_objects[j].position.x, jsonlist.creatable_objects[j].position.y, jsonlist.creatable_objects[j].position.z); } catch (err) { }
+						try { sphere.id = jsonlist.creatable_objects[j].id; } catch (err) { }
+						createlist.push(sphere.id);
+						// aplpy image if exists
+						if ((jsonlist.creatable_objects[j].image != "none") && (jsonlist.creatable_objects[j].image != null)) //image exists
+						{
+							try {
+								spheremat.diffuseTexture = new BABYLON.Texture(jsonlist.creatable_objects[j].image, scene);
+								spheremat.specularColor = new BABYLON.Color3(0, 0, 0);
+								spheremat.backFaceCulling = false;//Allways show the front and the back of an element
+								spheremat.diffuseTexture.hasAlpha = true;
+							}
+							catch (err) { console.log("Image for:" + sphere.id + " could not be applied"); }
+						}
+						else //no image, just apply colors
+						{
+							try {
+								spheremat.diffuseColor = new BABYLON.Color3(jsonlist.creatable_objects[j].color.diffuse.r, jsonlist.creatable_objects[j].color.diffuse.g, jsonlist.creatable_objects[j].color.diffuse.b);
+								spheremat.specularColor = new BABYLON.Color3(jsonlist.creatable_objects[j].color.specular.r, jsonlist.creatable_objects[j].color.specular.g, jsonlist.creatable_objects[j].color.specular.b);
+							}
+							catch (err) { console.log("No color for:" + sphere.id + ". Using defaults"); }
+						}
+						sphere.material = spheremat;
+
+						if (editor == false)
+							sphere.isPickable = false;
+
+						try {
+							spheremat.diffuseColor = new BABYLON.Color3(jsonlist.creatable_objects[j].color.diffuse.r, jsonlist.creatable_objects[j].color.diffuse.g, jsonlist.creatable_objects[j].color.diffuse.b);
+							sphere.material = spheremat;
+						} catch (err) { console.log("No color for:" + sphere.id + ". Using defaults"); }
+
+						if (jsonlist.creatable_objects[j].collisionEnabled == true) Obstacles.push(sphere);
+						if ((jsonlist.creatable_objects[j].visible == false) && (editor == false)) {
+							sphere.metadata = sphere.position.y;
+							sphere.position.y = -10000;
+						}
+
+						generatedobj = sphere;
+					}
+					if (jsonlist.creatable_objects[j].tag !== undefined) {
+						BABYLON.Tags.EnableFor(generatedobj);
+						generatedobj.addTags(jsonlist.creatable_objects[i].tag);
+					}
+					console.log("ID:" + jsonlist.creatable_objects[j].id);
+					j++;
+					createcounter++;
+					if (j < jsonlist.creatable_objects.length) {
+						createobjects(j);
+					}
+				}
+			}
+
+			// Events
+			var canvas = engine.getRenderingCanvas();
+			var startingPoint;
+
+			var lastImpostor;
+			var diff;
+
+
+			var getGroundPosition = function () {
+				// Use a predicate to get position on the ground
+				var pickinfo = scene.pick(scene.pointerX, scene.pointerY, function (mesh) { return mesh == ground; });
+				if (pickinfo.hit) {
+					return pickinfo.pickedPoint;
+				}
+
+				return null;
+			}
+			function handleKeyDown(evt) {
+
+				if ((currentMesh != "") && (editor == true)) { //active when in editor mode
+					console.log("Key:" + evt.keyCode);
+					if (evt.keyCode == 107) //scale ++
+					{
+						currentMesh.scaling.x = currentMesh.scaling.x + 0.1;
+						currentMesh.scaling.y = currentMesh.scaling.y + 0.1;
+						currentMesh.scaling.z = currentMesh.scaling.z + 0.1;
+					}
+					if (evt.keyCode == 109) //scale --
+					{
+						currentMesh.scaling.x = currentMesh.scaling.x - 0.1;
+						currentMesh.scaling.y = currentMesh.scaling.y - 0.1;
+						currentMesh.scaling.z = currentMesh.scaling.z - 0.1;
+					}
+					if (evt.keyCode == 103)
+						currentMesh.scaling.x = currentMesh.scaling.x + 0.1;
+
+					if (evt.keyCode == 97)
+						currentMesh.scaling.x = currentMesh.scaling.x - 0.1;
+
+					if (evt.keyCode == 104)
+						currentMesh.scaling.y = currentMesh.scaling.y + 0.1;
+
+					if (evt.keyCode == 98)
+						currentMesh.scaling.y = currentMesh.scaling.y - 0.1;
+
+					if (evt.keyCode == 105)
+						currentMesh.scaling.z = currentMesh.scaling.z + 0.1;
+
+					if (evt.keyCode == 99)
+						currentMesh.scaling.z = currentMesh.scaling.z - 0.1;
+
+					if (evt.keyCode == 38) {
+						if(currentMesh.id.startsWith("Ani")) //multiple meshes so use quad
+							currentMesh.rotate(BABYLON.Axis.X, radi, BABYLON.Space.WORLD);
+						else 
+							currentMesh.rotation.x = currentMesh.rotation.x + radi;
+
+					}
+					if (evt.keyCode == 40) {
+						if(currentMesh.id.startsWith("Ani")) //multiple meshes so use quad
+							currentMesh.rotate(BABYLON.Axis.X, -radi, BABYLON.Space.WORLD);
+						else
+							currentMesh.rotation.x = currentMesh.rotation.x - radi;
+					}
+					if (evt.keyCode == 37) {
+						if(currentMesh.id.startsWith("Ani")) //multiple meshes so use quad
+							currentMesh.rotate(BABYLON.Axis.Y, +radi, BABYLON.Space.WORLD);
+						else
+							currentMesh.rotation.y = currentMesh.rotation.y + radi;
+	
+					}
+					if (evt.keyCode == 39) {
+						if(currentMesh.id.startsWith("Ani")) //multiple meshes so use quad
+							currentMesh.rotate(BABYLON.Axis.Y, -radi, BABYLON.Space.WORLD);
+						else
+							currentMesh.rotation.y = currentMesh.rotation.y - radi;
+					}
+					if (evt.keyCode == 87) {
+						currentMesh.position.y = currentMesh.position.y + 1;
+					}
+					if (evt.keyCode == 83) {
+						currentMesh.position.y = currentMesh.position.y - 1;
+					}
+					if (evt.keyCode == 67) { //toggle camera control key C
+						if (cameraMode == false) {
+							cameraMode = true;
+							camera.attachControl(canvas, true);
+						}
+						else {
+							cameraMode = false;
+							camera.detachControl(canvas);
+						}
+
+					}
+					if (evt.keyCode == 46) { //remove mesh
+						var index = createlist.indexOf(currentMesh.id);
+						if (index > -1)
+							createlist.splice(index, 1);
+						else //its in loadlist
+						{
+							index = loadlist.indexOf(currentMesh.id);
+							if (index > -1)
+								loadlist.splice(index, 1);
+						}
+						currentMesh.dispose();
+
+					}
+					if (evt.keyCode == 73) { //add image plane
+						var imageplane = prompt("Please enter the filename of the image: (in textures folder)", "zoomap.png");
+						if (imageplane != null && imageplane != "") {
+							var materialPlane = new BABYLON.StandardMaterial("texturePlane", scene);
+							materialPlane.diffuseTexture = new BABYLON.Texture("textures/" + imageplane, scene);
+							materialPlane.specularColor = new BABYLON.Color3(0, 0, 0);
+							materialPlane.backFaceCulling = false;//Allways show the front and the back of an element
+							materialPlane.diffuseTexture.hasAlpha = true;
+							currentMesh.material = materialPlane;
+						}
+					}
+					if (evt.keyCode == 82) //reset position, rotation and size
+					{
+						currentMesh.position.x = 0;
+						currentMesh.position.y = 0;
+						currentMesh.position.z = 0;
+						currentMesh.rotation.x = 0;
+						currentMesh.rotation.y = 0;
+						currentMesh.rotation.z = 0;
+						currentMesh.scaling.x = 1;
+						currentMesh.scaling.y = 1;
+						currentMesh.scaling.z = 1;
+					}
+					if (evt.keyCode == 32)// new ID
+					{
+						var newId = prompt("Please enter the new ID of the mesh:", currentMesh.id);
+						if (newId != null && newId != "") {
+							//also update the list
+							var index = createlist.indexOf(currentMesh.id);
+							if (index > -1)
+								createlist[index] = newId;
+							else //its in loadlist
+							{
+								index = loadlist.indexOf(currentMesh.id);
+								if (index > -1)
+									loadlist[index] = newId;
+							}
+							currentMesh.id = newId;
+
+						}
+					}
+
+				}
+			};
+
+			var onPointerDown = function (evt) {
+
+				if (evt.button !== 0) {
+					return;
+				}
+				var pickInfo = scene.pick(scene.pointerX, scene.pointerY, function (mesh) { return mesh !== ground; });
+				var a = hiddenObj;
+				if ((clicksEnabled) && (pickInfo.hit)) { //check if mesh is on move to ignore second touch
+					console.log("mesh:" + pickInfo.pickedMesh.id)
+					if(pickInfo.pickedMesh.id.startsWith("Ani") && groupMode == true) 
+					{
+						var tmpstr = pickInfo.pickedMesh.id;
+						tmpstr = setCharAt(tmpstr,4,'0');
+						currentMesh = scene.getMeshByID(tmpstr);
+					}
+					else
+						currentMesh = pickInfo.pickedMesh;
+						
+					logger = logger + "Touch Down event MeshID:" + currentMesh.id + "," + Math.round(currentMesh.position.x) + "," + Math.round(currentMesh.position.z) + "," + new Date().toLocaleString() + "\r\n";
+					if ((pickInfo.pickedMesh.isPickable) || (editor)) startingPoint = getGroundPosition(evt);
+					if (currentMesh.id != "") {
+						// Remove all currently active highlights
+						hintRAllObjects();
+						hl.addMesh(currentMesh, BABYLON.Color3.White());
+
+
+						// send updated location to interactionmanager if mesh selected
+						var jsonobj = {
+							"id": currentMesh.id,
+							"position": {
+								"x": currentMesh.position.x,
+								"y": currentMesh.position.y,
+								"z": currentMesh.position.z
+							},
+							"rotation": {
+								"x": currentMesh.rotation.x / radi,
+								"y": currentMesh.rotation.y / radi,
+								"z": currentMesh.rotation.z / radi
+							},
+							"scaling": {
+								"x": currentMesh.scaling.x,
+								"y": currentMesh.scaling.y,
+								"z": currentMesh.scaling.z
+							}
+						};
+						sendText("call:tablet.interactionmanager.touchDown|" + JSON.stringify(jsonobj));
+					}
+				}
+				else {
+					if (clicksEnabled) {
+						var jsonobj = {
+							"id": "screen",
+							"position": {
+								"x": evt.pageX,
+								"y": evt.pageY,
+								"z": 0
+							},
+							"rotation": {
+								"x": 0,
+								"y": 0,
+								"z": 0
+							},
+							"scaling": {
+								"x": 0,
+								"y": 0,
+								"z": 0
+							}
+						};
+						sendText("call:tablet.interactionmanager.touchDown|" + JSON.stringify(jsonobj));						
+					}
+					currentMesh = null;
+				}
+			}
+
+			var onPointerUp = function (evt) {
+				if ((clicksEnabled) && (currentMesh != null)) {
+					logger = logger + "Touch Up event MeshID:" + currentMesh.id + "," + Math.round(currentMesh.position.x) + "," + Math.round(currentMesh.position.z) + "," + new Date().toLocaleString() + "\r\n";
+					console.log("mesh pos:" + currentMesh.position);
+					hintRObject(currentMesh.id);
+					//check if mesh is left out of view
+
+					if (scene.isActiveMesh(currentMesh) == false) {
+						//move object to center of screen
+						currentMesh.position.x = 0;
+						currentMesh.position.y = 5;
+						currentMesh.position.z = 0;
+
+					}
+
+					// send updated location to uwds and interaction manager if mesh is not null
+					if (currentMesh.id != "") {
+						var jsonobj = {
+							"id": currentMesh.id,
+							"position": {
+								"x": currentMesh.position.x,
+								"y": currentMesh.position.y,
+								"z": currentMesh.position.z
+							},
+							"rotation": {
+								"x": currentMesh.rotation.x / radi,
+								"y": currentMesh.rotation.y / radi,
+								"z": currentMesh.rotation.z / radi
+							},
+							"scaling": {
+								"x": currentMesh.scaling.x,
+								"y": currentMesh.scaling.y,
+								"z": currentMesh.scaling.z
+							}
+						};
+						sendText("call:tablet.[uwds,interactionmanager].touchUp|" + JSON.stringify(jsonobj));
+					}
+
+					if (startingPoint) {
+
+						startingPoint = null;
+
+						return;
+					}
+				}
+				else if (cameraMode == true) //show current camera settings
+				{
+					console.log("Camera Alpha:" + camera.alpha + " Beta:" + camera.beta + " Radius:" + camera.radius + " Position:" + camera.position)
+				}
+
+				else if (clicksEnabled) {
+					if (clicksEnabled) {
+						var jsonobj = {
+							"id": "screen",
+							"position": {
+								"x": evt.pageX,
+								"y": evt.pageY,
+								"z": 0
+							},
+							"rotation": {
+								"x": 0,
+								"y": 0,
+								"z": 0
+							},
+							"scaling": {
+								"x": 0,
+								"y": 0,
+								"z": 0
+							}
+						};
+						sendText("call:tablet.interactionmanager.touchUp|" + JSON.stringify(jsonobj));						
+					}					
+				}
+
+			}
+
+			var onPointerMove = function (evt) {
+
+				if ((!startingPoint) || (currentMesh.isPickable == false && editor == false)) {
+					return;
+				}
+
+				var current = getGroundPosition(evt);
+				if (!current) {
+					return;
+				}
+
+				//if editor is on the move without collision detection and deactivate the screen edges
+				if (editor == false) {
+					if ((scene.pointerX < 50) || (scene.pointerX > 1300) || (scene.pointerY < 50) || (scene.pointerY > 850))
+						return;
+
+					currentMesh.position.y = current.y;
+					currentMesh.position.x = current.x;
+
+					//currentMesh.position = current;
+					for (var i = 0; i < Obstacles.length; i++) {
+						var obs = Obstacles[i];
+						if (obs.name.startsWith('Wall') && current.z < obs.getBoundingInfo().boundingBox.maximumWorld.z) {
+							currentMesh.position.z = obs.getBoundingInfo().boundingBox.maximumWorld.z + 20;
+							return;
+						}
+						if ((currentMesh.intersectsMesh(obs, false)) && (obs.id != currentMesh.id) && (editor == false) && (currentMesh.isPickable == true) && (currentMesh.id.startsWith("m_"))) {
+							var jsonobj = {
+								"obj_1": currentMesh.id,
+								"obj_2": obs.id
+							};
+
+							if (obs.id != prevCollisionId) {
+								sendText("call:tablet.interactionmanager.objectsCollided|" + JSON.stringify(jsonobj));
+								prevCollisionId = obs.id;
+							}
+							currentMesh.position.y = obs.getBoundingInfo().boundingBox.maximumWorld.y + obs.position.y - 1;
+						}
+
+					}
+
+					currentMesh.position.z = current.z;
+				}
+
+				else {
+
+					currentMesh.position.x = current.x;
+					currentMesh.position.z = current.z;
+				}
+
+				startingPoint = current;
+			}
+			window.addEventListener("keydown", handleKeyDown, false);
+
+			canvas.addEventListener("pointerdown", onPointerDown, false);
+			canvas.addEventListener("pointerup", onPointerUp, false);
+			canvas.addEventListener("pointermove", onPointerMove, false);
+
+			scene.onDispose = function () {
+				canvas.removeEventListener("pointerdown", onPointerDown);
+				canvas.removeEventListener("pointerup", onPointerUp);
+				canvas.removeEventListener("pointermove", onPointerMove);
+				canvas.removeEventListener("keydown", handleKeyDown);
+				canvas.removeEventListener("keyup", handleKeyUp);
+			}
+
+			return scene;
+		};
+		//json sample for testing
+		jsonstrSample = {
+			"ground": "grass.jpg",
+			"loadable_objects": [
+				{
+					"id": "temp_giraffe0",
+					"filename": "giraffe",
+					"collisionEnabled": true,
+					"position": {
+						"x": 234.21161666793333,
+						"y": 0,
+						"z": -61.330589911553886
+					},
+					"rotation": {
+						"x": 0,
+						"y": -56.01,
+						"z": 0
+					},
+					"scaling": {
+						"x": 5.499999999999997,
+						"y": 5.499999999999997,
+						"z": 5.499999999999997
+					},
+					"visible": true
+				}
+			],
+			"creatable_objects": [
+				{
+					"id": "temp_plane_0",
+					"type": "plane",
+					"collisionEnabled": true,
+					"position": {
+						"x": 229.11282052820525,
+						"y": 0,
+						"z": -41.29866080047407
+					},
+					"rotation": {
+						"x": 97,
+						"y": 0,
+						"z": 0
+					},
+					"scaling": {
+						"x": 2.200000000000001,
+						"y": 2.200000000000001,
+						"z": 2.200000000000001
+					},
+					"visible": true,
+					"color": {
+						"diffuse": {
+							"r": 1,
+							"g": 1,
+							"b": 1
+						},
+						"specular": {
+							"r": 1,
+							"g": 1,
+							"b": 1
+						}
+					}
+				}
+			]
+		};
+
+
+		// Resize
+		window.addEventListener("resize", function () {
+			engine.resize();
+		});
+	</script>
+</body>
+
+</html>

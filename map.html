@@ -1,0 +1,125 @@
+﻿<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+    <title>Map selection</title>
+    <link rel="stylesheet" type="text/css" href="css/grey.css">
+    <script src="scripts/jquery-1.8.3.min.js"></script>
+    <script src="scripts/main.js"></script>
+    <style>
+        html,
+        body {
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-image: url("textures/grass.jpg");
+        }
+
+        #renderCanvas {
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <img onclick="objectClick();" id="zoo" data-level=0 src="textures/zoomap.png" alt="" width="500" height="150" style="position: absolute; top: 50px; left:0px;"
+    />
+
+    <canvas id="renderCanvas"></canvas>
+    
+    <script>
+        // $('body').append('<button id="button" style="position: absolute; left: 0px; top: 0px;">Exit</button>');
+        var socket = null;
+        var isopen = false;
+        var activeMap = "";
+        var msgtmp;
+        //gray out all the images first
+        var images = document.images;
+        window.onload = function () {
+            for (var i = 0; i < images.length; i++) {
+                var tmpvar = document.getElementById(images[i].id);
+
+                tmpvar.classList.add("img_grey");
+                tmpvar.onclick = null; //remove click 
+            }
+            socket = new WebSocket("ws://127.0.0.1:9014/ws");
+            socket.onopen = function () {
+                console.log("Connected!");
+                isopen = true;
+            }
+            socket.onmessage = function (e) {
+                if (isopen)
+                    socket.send("msgrcvd")
+                if (typeof e.data == "string") {
+                    console.log("Text message received: " + e.data);
+
+                    if (e.data.startsWith("showObject")) {
+                        msgtmp = e.data.split("|");
+                        jsonlist = JSON.parse(msgtmp[1]);
+                        jsonlist = jsonlist.ids;
+                        for (var i = 0; i < jsonlist.length; i++)
+                            showObject(jsonlist[i]);
+                    }
+                    if (e.data.startsWith("enableObject")) 
+                    {
+                        msgtmp = e.data.split("|");
+                        msgtmp = msgtmp[1];
+                        enableObject(msgtmp);
+                    }
+                    else if (e.data.startsWith("gotoScene"))
+                    {
+                        socket.close();
+                        window.open("scene.html", "_top");
+                    }
+                    if (e.data.startsWith("getCurrentScene")) {
+                        socket.send("call:tablet.interactionmanager.setCurrentScene|{}");
+                    }
+                }
+
+            }
+            socket.onclose = function (e) {
+                console.log("Connection closed (wasClean = " + e.wasClean + ", code = " + e.code + ", reason = '" + e.reason + "')");
+                isopen = false;
+                socket = null;
+            }
+        };
+        function hideObject(object) {
+            var tmpvar = document.getElementById(object);
+            tmpvar.style.visibility == 'hidden';
+        }
+        function showObject(object) {
+            var tmpvar = document.getElementById(object);
+            tmpvar.style.visibility == 'visible';
+            tmpvar.classList.remove("img_grey");
+        }
+        function enableObject(object) {
+            var tmpvar = document.getElementById(object);
+            tmpvar.onclick = objectClick;
+            activeMap = object;
+        }
+
+        function objectClick() {
+            var jsontmp;
+            jsontmp = {
+                "id": activeMap,
+                "position": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                }
+            };
+            socket.send("call:tablet.interactionmanager.touchDown|" + JSON.stringify(jsontmp));
+            socket.close();
+            window.open("scene.html", "_top");
+        }
+    </script>
+</body>
+
+</html>
